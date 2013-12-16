@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+    <meta charset='utf-8' />
+    <meta http-equiv="X-UA-Compatible" content="chrome=1" />
+    <meta name="description" content="Josh.github.io : " />
+
+    <link rel="stylesheet" type="text/css" media="screen" href="stylesheets/stylesheet.css">
+
+    <title>Josh.github.io</title>
+  </head>
+
+  <body>
+
+    <!-- HEADER -->
+    <div id="header_wrap" class="outer">
+        <header class="inner">
+          <a id="forkme_banner" href="https://github.com/ReallyMatriX/josh.github.io">View on GitHub</a>
+
+          <h1 id="project_title">Josh.github.io</h1>
+          <h2 id="project_tagline"></h2>
+
+            <section id="downloads">
+              <a class="zip_download_link" href="https://github.com/ReallyMatriX/josh.github.io/zipball/master">Download this project as a .zip file</a>
+              <a class="tar_download_link" href="https://github.com/ReallyMatriX/josh.github.io/tarball/master">Download this project as a tar.gz file</a>
+            </section>
+        </header>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div id="main_content_wrap" class="outer">
+      <section id="main_content" class="inner">
+        <h3>
+<a name="rvalue-semantics-in-c11" class="anchor" href="#rvalue-semantics-in-c11"><span class="octicon octicon-link"></span></a>Rvalue semantics in C++11</h3>
+
+<p>Have you wanted to just move variables from one place to another? Intuitively, it makes sense to simply move data from one location to another. Most of the time what programmers tend to do is make a copy of the object they are passing and then simply destroy the original, but what if that particular object is massive in size and costly to store in memory? This is where rvalue semantics in C++11 come in handy!
+Lets take a look at some types: </p>
+
+<pre><code>int a {10};  //OK standard lvalue type
+int* b {&amp;a}; //OK standard pointer type, initialised to point to a
+int&amp; c {a}  //OK standard reference type, initialised to reference a
+int&amp;&amp; d {square(a)} //OK standard rvalue type, initialised to the return of sqrt(a)
+//but what does this mean?
+</code></pre>
+
+<p>The standard syntax of rvalue types is: <code>T&amp;&amp;</code> with <code>&amp;&amp;</code> meaning rvalue reference. To the compiler when you make a variable with this type it can only bind to temporary variables. Let's see some examples:</p>
+
+<pre><code>int a {10};
+int&amp; b {a};
+std::string helloMessage(); //function that returns a std::string object
+int&amp;&amp; var1 {a}; //error: a is not an rvalue or temporary, is an lvalue
+int&amp;&amp; var2 {square(a)}; //OK: sqrt() returns a temporary of type int
+int&amp;&amp; var3 {10}; //OK: 10 is a temporary variable, var3 can bind to it
+int&amp;&amp; var4 {b};         //error: b is a lvalue reference
+std::string&amp;&amp; var5 {"Hello, World!\n"}; //OK: var5 constructs a string object and binds to the temporary
+std::string&amp;&amp; var6 {helloMessage()};    //OK: helloMessage() returns a temporary string object
+
+</code></pre>
+
+<p>One thing to note about rvalue references, however, is that an rvalue reference are treated like a lvalue. Why? Like any reference, an rvalue reference is just another name for an object. We cannot bind an lvalue to a function or expression that requires an rvalue reference.
+So now that we understand a little bit of syntax, and maybe some semantics, how can we use it in our code to make it more efficient? Perhaps the most common use of move semantics is in moving containers around. Let's take a look:</p>
+
+<pre><code>template &lt;typename T&gt;
+class array {
+  std::unique_ptr&lt;T[]&gt; elem;
+  int m_size;
+ public:
+  array(int size): elem{new int[size] { }}, m_size{size} { }
+  array()=delete;
+  const T* begin() const noexcept {return elem.get();}
+  const T* end() const noexcept {return elem.get()+m_size;}
+  constexpr int size() const {return m_size;}
+  T&amp; operator[](int n) {return elem[n];}
+  const T&amp; operator[](int n) const {return elem[n];}
+};
+</code></pre>
+
+<p>This is a very simplified version of a container. Now, traditionally, we would define an operator `=' in order to copy this container to another variable, maybe we need to modify one and keep the original, but what if we only need one copy and a function returned the result as our array class? Assume that we have an operator = defined like this: </p>
+
+<pre><code>template &lt;typename T&gt;
+array&lt;T&gt;&amp; array&lt;T&gt;::operator=(const array&lt;T&gt;&amp; arr) {
+  elem.reset(new int[arr.size()] { });
+  for (int i {};i != arr.size();++i)
+    elem[i] = arr[i];
+  return *this;
+}
+</code></pre>
+
+<p>We might also define a copy constructor similarly. This is fine if we have to lvalue objects, but it's absolutely awful if we have a temporary! Why? Well we make a copy of the already temporary object we bind our const reference to, for example:</p>
+
+<pre><code>array&lt;int&gt; arr{5};
+arr = make_array_of_7s(5); //a function that returns a new array object of size 5 full of 7's
+</code></pre>
+
+<p>As you can see, this is a small problem because first we construct the array object in the function, then we construct a new pointer in the <code>=' operator while deleting the old one, THEN we go through each element of of the temporary object and assign it. Oh did I mention that the temporary object gets deleted on top of that?! That is some overhead... Luckily, C++11 solves this overhead. Now we can define a simple</code>=' operator simply for moving objects:</p>
+
+<pre><code>template &lt;typename T&gt;
+array&lt;T&gt;&amp; array&lt;T&gt;::operator=(array&lt;T&gt;&amp;&amp; arr) {
+  elem   = arr.elem;
+  m_size = arr.size();
+  return *this;
+}
+</code></pre>
+
+<p>Much better! As you can see, this is a much friendlier operation. There is only one call to delete this time and there is no need for a new operator! This is the philosophy behind moving objects. A move-constructor might be defined very similarly for our array object.</p>
+
+<h2>
+<a name="rvalue-references-and-functions--templates" class="anchor" href="#rvalue-references-and-functions--templates"><span class="octicon octicon-link"></span></a>Rvalue references and functions + templates</h2>
+
+<p>Rvalues can be used virtually everywhere you can have an argument, and functions are no different. If we wanted to make a "perfect" swap function we might do something like this:</p>
+
+<pre><code>template &lt;typename T&gt;
+void swap(T&amp; a, T&amp; b) {
+  T tmp {std::move(a)}; //a may or may not be valid data
+  a = std::move(b);     //b may or may not be valid data
+  b = std::move(tmp);
+}
+</code></pre>
+
+<p>The std::move function will basically statically cast it's argument to be a type T&amp;&amp; and any move constructors or move based assignments will pick this cast up and perform the move operation.</p>
+
+<h3>
+<a name="advanced-rvalue-references" class="anchor" href="#advanced-rvalue-references"><span class="octicon octicon-link"></span></a>Advanced rvalue references</h3>
+
+<p>We can declare functions that only take rvalues if we wanted to, but more importantly is that rvalues solve a very important problem we previously had with function templates, and that is the perfect forwarding problem. Let's take a look at what the problem is (you may find this example in the ISO specification document):</p>
+
+<pre><code>template &lt;typename T, typename Arg&gt;
+std::shared_ptr&lt;T&gt; factory(Arg&amp; arg) {
+  return std::shared_ptr&lt;T&gt;{new T{arg}};
+}
+</code></pre>
+
+<p>Now this might look solid to that naked eye but there is a pretty big problem here, we can't call this function with rvalues. Why? Well because the argument of type Arg is a reference and a reference cannot bind to an rvalue:</p>
+
+<pre><code>int a {10};
+factory&lt;int&gt;(a);  //OK: a can bind to a reference
+factory&lt;int&gt;(square(a)); //error if square returns by value
+factory&lt;int&gt;(10);  //error: cannot bind arg of type int&amp; to a temporary
+</code></pre>
+
+<p>A pre-C++11 approach might be to define the function as follows:</p>
+
+<pre><code>template &lt;typename T, typename Arg&gt;
+std::shared_ptr&lt;T&gt; factory(const Arg&amp; arg) { //Notice the const
+    return std::shared_ptr&lt;T&gt;{new T{arg}};
+}
+</code></pre>
+
+<p>Now we can call this function with rvalues, but this solution presents two problems of it's own. Firstly we block out move semantics because now all of our rvalues would get forwarded to this overload and it's impossible to tell if it was an rvalue or lvalue. Secondly it scales poorly because if we have a similar function with more arguments we have to define const and non-const versions of the same function. C++11 to the rescue! As it provides us with a perfect way to fix this issue using rvalue references, but firstly we need to understand some reference collapsing rules in C++11:</p>
+
+<pre><code>T&amp;  &amp;  -&gt; T&amp;
+T&amp;  &amp;&amp; -&gt; T&amp;
+T&amp;&amp; &amp;  -&gt; T&amp;
+T&amp;&amp; &amp;&amp; -&gt; T&amp;&amp;
+</code></pre>
+
+<p>So, in other words, T&amp; always wins if given two different reference types. While this may seem confusing it will make more sense if we look at the function template defined as follows:</p>
+
+<pre><code>template &lt;typename T, typename Arg&gt;
+std::shared_ptr&lt;T&gt; factory(Arg&amp;&amp; arg) { //Notice the argument is now a &amp;&amp;
+  return std::shared_ptr&lt;T&gt;{new T{std::forward&lt;Arg&gt;(arg)}};
+}
+</code></pre>
+
+<p>The significance of std::forward will be explained later. So what happens when we call it with an lvalue:</p>
+
+<pre><code>int a {10};
+factory&lt;int&gt;(a);
+</code></pre>
+
+<p>The compiler will instantiate the template like so:</p>
+
+<pre><code>std::shared_ptr&lt;int&gt; factory(int&amp; &amp;&amp; arg) {
+  return std::shared_ptr&lt;int&gt;{new int{std::forward&lt;int&amp;&gt;(arg)}};
+}
+</code></pre>
+
+<p>Remember those reference collapsing rules? That funny looking int&amp; &amp;&amp; simply becomes int&amp; which is correct given the type. So now let us call it with an rvalue:</p>
+
+<pre><code>factory&lt;int&gt;(10);
+</code></pre>
+
+<p>The compiler will instantiate the template like so:</p>
+
+<pre><code>std::shared_ptr&lt;int&gt; factory(int&amp;&amp; &amp;&amp; arg) {
+  return std::shared_ptr&lt;int&gt;{new int{std::forward&lt;int&amp;&amp;&gt;(arg)}};
+}
+</code></pre>
+
+<p>Again the reference collapsing rules take over and int&amp;&amp; &amp;&amp; becomes int&amp;&amp; which, again, what we want. The purpose of std::forward is to preserve move semantics and since we gave our argument a name `arg' then it will always call the copy constructor of our type T when we call it with arg and not the move constructor.</p>
+
+<h3>
+<a name="restricted-classa-very-vague-example" class="anchor" href="#restricted-classa-very-vague-example"><span class="octicon octicon-link"></span></a>Restricted Class(A very vague example)</h3>
+
+<p>Let's say, Foo is a restricted class with the following definition:</p>
+
+<pre><code>template &lt; class T, class U &gt;
+struct Foo
+{
+    Foo() = delete;
+    Foo(T &amp;&amp; _1, U &amp;&amp; _2): foo_1(_1), foo_2( _2) {}
+    ...
+    ~Foo() {}
+    T foo_1;
+    U foo_2;
+};
+
+template&lt;typename _Tp, typename _Tp2&gt;
+Foo &lt;_Tp, _Tp2&gt; produce_foo(_Tp &amp;&amp;x, _Tp2 &amp;&amp;y)
+{
+ return Foo&lt;_Tp, _Tp2&gt; { {std::forward&lt;_Tp&gt; (x)}, {std::forward&lt;_Tp2&gt;(y) } };
+}
+</code></pre>
+
+<p>This class, for weird reasons, defines only a move constructor, therefore forbids binding an lvalue object to its ctors. Every instantiation of Foo objects requires a movable object. The function, produce_foo, is a "foo factory producer" that strictly requires an rvalue.</p>
+
+<pre><code>Foo&lt;std::string, double&gt; &amp;&amp; material = produce_foo&lt;std::string, double&gt;("Cotton", 12.4f); //OK, rvalue reference
+//if store is a vector of type Foo&lt;std::string, double&gt;, then
+store.emplace_back(material); //would be an error! material is an lvalue
+
+store.emplace_back(std::move(material)); //would be OK, material is an rvalue
+</code></pre>
+
+<p>As a bottom line, USE MOVES. They are efficient ways of dealing with large amounts of data and can make you even write less code (perfect forwarding!). So get your std::move on!</p>
+
+<p>Originally written by Cameron DaCamara, edited and recompiled by Ogunyinka Josh.</p>
+      </section>
+    </div>
+
+    <!-- FOOTER  -->
+    <div id="footer_wrap" class="outer">
+      <footer class="inner">
+        <p class="copyright">Josh.github.io maintained by <a href="https://github.com/ReallyMatriX">ReallyMatriX</a></p>
+        <p>Published with <a href="http://pages.github.com">GitHub Pages</a></p>
+      </footer>
+    </div>
+
+    
+
+  </body>
+</html>
